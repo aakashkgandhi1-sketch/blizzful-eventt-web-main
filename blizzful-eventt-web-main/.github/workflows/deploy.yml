@@ -1,0 +1,72 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  # Periodic re-sync so client uploads to the Drive "Gallery" folder appear
+  # on the live site without anyone touching the repo. 6h cadence keeps the
+  # GitHub Actions minute usage modest.
+  schedule:
+    - cron: "0 */6 * * *"
+  # Lets the client (or anyone with repo access) press "Run workflow" in the
+  # GitHub Actions UI to force an immediate gallery refresh.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Fetches subfolders + images from the Drive "Gallery" folder and
+      # writes src/data/gallery-snapshot.json which the Next build imports.
+      # If GOOGLE_API_KEY is unset the script logs a warning and exits 0 —
+      # the build falls back to the committed snapshot.
+      - name: Sync gallery from Google Drive
+        run: npm run sync-gallery
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_DRIVE_GALLERY_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_GALLERY_FOLDER_ID }}
+
+      - name: Build
+        run: npm run build
+        env:
+          GITHUB_PAGES: "true"
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./out
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
